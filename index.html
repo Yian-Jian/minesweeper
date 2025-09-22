@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>扫雷 - 简易版</title>
+<style>
+  :root{
+    --bg:#f3f6f9;
+    --cell:#e1e8ef;
+    --cell-border:#c9d6e3;
+    --tile-size:36px;
+    --accent:#2b7cff;
+  }
+  body{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: linear-gradient(180deg,#f8fbff, var(--bg));
+    margin:20px;
+    display:flex;
+    justify-content:center;
+  }
+  .app{
+    width: min(92vw, 760px);
+    background: white;
+    border-radius:10px;
+    box-shadow:0 6px 24px rgba(20,40,80,0.08);
+    padding:18px;
+  }
+  .header{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:12px;
+  }
+  h1{font-size:18px;margin:0;}
+  .controls{margin-left:auto; display:flex; gap:8px; align-items:center;}
+  select, input[type="number"]{padding:6px;border-radius:6px;border:1px solid #d5e1ec;background:white;}
+  button{
+    padding:8px 12px;border-radius:8px;border:1px solid var(--cell-border);
+    background:linear-gradient(180deg,#fff,#f6fbff);
+    cursor:pointer;
+  }
+  button.primary{background:var(--accent); color:white; border:none;}
+  .status{
+    display:flex; gap:12px; align-items:center; margin-bottom:10px;
+  }
+  .badge{
+    padding:8px 10px; border-radius:8px; background:var(--cell); border:1px solid var(--cell-border);
+    min-width:80px; text-align:center; font-weight:600;
+  }
+
+  .board{
+    display:grid;
+    gap:4px;
+    justify-content:center;
+    padding:12px;
+    background: linear-gradient(180deg,#eef6ff,#fff);
+    border-radius:8px;
+  }
+
+  .cell{
+    width:var(--tile-size);
+    height:var(--tile-size);
+    display:flex; align-items:center; justify-content:center;
+    background:var(--cell);
+    border-radius:6px;
+    border:1px solid var(--cell-border);
+    user-select:none;
+    font-weight:700;
+    cursor:pointer;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  }
+  .cell.revealed{
+    background: linear-gradient(180deg,#fbfdff,#ecf4ff);
+    cursor:default;
+    box-shadow:none;
+    border:1px solid rgba(0,0,0,0.06);
+    font-weight:700;
+  }
+  .cell.mine{
+    background: linear-gradient(180deg,#ffecec,#ffd6d6);
+    color:#900;
+  }
+  .cell.flag{ color:#d33; }
+  .cell.number-1{ color: #1565c0; }
+  .cell.number-2{ color: #2e7d32; }
+  .cell.number-3{ color: #b71c1c; }
+  .cell.number-4{ color: #4a148c; }
+  .cell.number-5{ color: #3e2723; }
+  .cell.number-6{ color: #00695c; }
+  .cell.number-7{ color: #37474f; }
+  .cell.number-8{ color: #263238; }
+
+  .footer{margin-top:12px; text-align:center; color:#6b7280;font-size:13px;}
+  @media (max-width:420px){
+    :root{ --tile-size:30px; }
+    .badge{min-width:68px;padding:6px;}
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1>扫雷（Minesweeper）</h1>
+      <div class="controls">
+        <label>难度：
+          <select id="difficulty">
+            <option value="easy">初级 9×9,10雷</option>
+            <option value="medium" selected>中级 16×16,40雷</option>
+            <option value="hard">高级 16×30,99雷</option>
+            <option value="custom">自定义</option>
+          </select>
+        </label>
+        <div id="customPanel" style="display:none;">
+          <input type="number" id="rows" min="5" max="40" value="16" style="width:66px;" />×
+          <input type="number" id="cols" min="5" max="60" value="16" style="width:66px;" />，
+          <input type="number" id="mines" min="1" value="40" style="width:86px;" />
+        </div>
+        <button id="newGameBtn" class="primary">重新开始</button>
+      </div>
+    </div>
+
+    <div class="status">
+      <div class="badge">剩余雷数：<span id="flagsLeft">0</span></div>
+      <div class="badge">计时：<span id="timer">0</span>s</div>
+      <div class="badge" id="gameState">准备中</div>
+    </div>
+
+    <div id="board" class="board" aria-label="扫雷棋盘"></div>
+
+    <div class="footer">
+      左键点击打开格子，右键标记 / 取消插旗。首次点击保证不会踩雷。祝你好运！
+    </div>
+  </div>
+
+<script>
+(function(){
+  const boardEl = document.getElementById('board');
+  const difficulty = document.getElementById('difficulty');
+  const customPanel = document.getElementById('customPanel');
+  const rowsInput = document.getElementById('rows');
+  const colsInput = document.getElementById('cols');
+  const minesInput = document.getElementById('mines');
+  const newGameBtn = document.getElementById('newGameBtn');
+  const flagsLeftEl = document.getElementById('flagsLeft');
+  const timerEl = document.getElementById('timer');
+  const gameStateEl = document.getElementById('gameState');
+
+  let rows = 16, cols = 16, mines = 40;
+  let grid = [];
+  let firstClick = true;
+  let timer = null;
+  let seconds = 0;
+  let flagsLeft = 0;
+  let gameOver = false;
+  let revealedCount = 0;
+  let totalCells = 0;
+
+  function setDifficultyFromSelect(){
+    const val = difficulty.value;
+    if(val === 'easy'){ rows=9; cols=9; mines=10; customPanel.style.display='none'; }
+    else if(val === 'medium'){ rows=16; cols=16; mines=40; customPanel.style.display='none'; }
+    else if(val === 'hard'){ rows=16; cols=30; mines=99; customPanel.style.display='none'; }
+    else { customPanel.style.display='inline-block'; rows=parseInt(rowsInput.value); cols=parseInt(colsInput.value); mines=parseInt(minesInput.value); }
+    rows = Math.max(5, Math.min(40, rows));
+    cols = Math.max(5, Math.min(60, cols));
+    mines = Math.max(1, Math.min(rows*cols-1, mines));
+  }
+
+  difficulty.addEventListener('change', ()=>{ setDifficultyFromSelect(); renderBoard(); });
+  rowsInput.addEventListener('change', ()=>{ if(difficulty.value==='custom'){ setDifficultyFromSelect(); renderBoard(); }});
+  colsInput.addEventListener('change', ()=>{ if(difficulty.value==='custom'){ setDifficultyFromSelect(); renderBoard(); }});
+  minesInput.addEventListener('change', ()=>{ if(difficulty.value==='custom'){ setDifficultyFromSelect(); renderBoard(); }});
+
+  newGameBtn.addEventListener('click', startNewGame);
+
+  function startNewGame(){
+    setDifficultyFromSelect();
+    initBoard();
+    renderBoard();
+    resetTimer();
+    gameStateEl.textContent = '进行中';
+    gameOver = false;
+    firstClick = true;
+  }
+
+  function initBoard(){
+    grid = Array.from({length:rows}, ()=>Array.from({length:cols}, ()=>({
+      mine:false, revealed:false, flagged:false, count:0, el:null
+    })));
+    flagsLeft = mines;
+    flagsLeftEl.textContent = flagsLeft;
+    totalCells = rows * cols;
+    revealedCount = 0;
+  }
+
+  function placeMinesAvoiding(r0,c0){
+    // place mines randomly but avoid the (r0,c0) and its neighbors
+    const forbidden = new Set();
+    for(let dr=-1; dr<=1; dr++){
+      for(let dc=-1; dc<=1; dc++){
+        const rr = r0+dr, cc = c0+dc;
+        if(rr>=0 && rr<rows && cc>=0 && cc<cols) forbidden.add(rr+','+cc);
+      }
+    }
+    let toPlace = mines;
+    while(toPlace>0){
+      const r = Math.floor(Math.random()*rows);
+      const c = Math.floor(Math.random()*cols);
+      const key = r+','+c;
+      if(forbidden.has(key)) continue;
+      if(!grid[r][c].mine){
+        grid[r][c].mine = true;
+        toPlace--;
+      }
+    }
+    // compute counts
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        if(grid[r][c].mine) continue;
+        let cnt=0;
+        for(let dr=-1; dr<=1; dr++){
+          for(let dc=-1; dc<=1; dc++){
+            if(dr===0 && dc===0) continue;
+            const rr=r+dr, cc=c+dc;
+            if(rr>=0&&rr<rows&&cc>=0&&cc<cols && grid[rr][cc].mine) cnt++;
+          }
+        }
+        grid[r][c].count = cnt;
+      }
+    }
+  }
+
+  function renderBoard(){
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${cols}, ${getComputedStyle(document.documentElement).getPropertyValue('--tile-size')})`;
+    // but CSS var is string; simpler: use tile size in px
+    const tileSize = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--tile-size')) || 36;
+    boardEl.style.gridTemplateColumns = `repeat(${cols}, ${tileSize}px)`;
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const cell = grid[r][c];
+        const el = document.createElement('div');
+        el.className = 'cell';
+        el.dataset.r = r; el.dataset.c = c;
+        // event listeners
+        el.addEventListener('click', onLeftClick);
+        el.addEventListener('contextmenu', onRightClick);
+        el.addEventListener('auxclick', (e)=>{ if(e.button===1) onMiddleClick(e); });
+        // Support ctrl+click as right-click for some touch setups
+        el.addEventListener('click', (e)=>{ if(e.ctrlKey || e.metaKey) { e.preventDefault(); toggleFlag(e); }});
+        boardEl.appendChild(el);
+        cell.el = el;
+        updateCellElement(cell);
+      }
+    }
+  }
+
+  function updateCellElement(cell){
+    const el = cell.el;
+    el.className = 'cell' + (cell.revealed ? ' revealed' : '') + (cell.flagged ? ' flag' : '') + (cell.revealed && cell.count>0 ? (' number-'+cell.count) : '') + (cell.revealed && cell.mine ? ' mine' : '');
+    if(cell.revealed){
+      if(cell.mine){
+        el.textContent = '💣';
+      } else if(cell.count>0){
+        el.textContent = cell.count;
+      } else {
+        el.textContent = '';
+      }
+    } else {
+      el.textContent = cell.flagged ? '🚩' : '';
+    }
+  }
+
+  function onLeftClick(e){
+    if(gameOver) return;
+    const r = parseInt(this.dataset.r), c = parseInt(this.dataset.c);
+    // if ctrl/meta held, treat as flag
+    if(e.ctrlKey || e.metaKey) { toggleFlag.call(this, e); return; }
+    // if revealed and number -> chord (open neighbors if flags equal)
+    const cell = grid[r][c];
+    if(cell.revealed){
+      chord(r,c);
+      return;
+    }
+    revealCell(r,c);
+  }
+
+  function onMiddleClick(e){
+    // treat middle click as chord
+    if(gameOver) return;
+    const r = parseInt(this.dataset.r), c = parseInt(this.dataset.c);
+    const cell = grid[r][c];
+    if(cell.revealed) chord(r,c);
+  }
+
+  function onRightClick(e){
+    e.preventDefault();
+    if(gameOver) return;
+    toggleFlag.call(this,e);
+  }
+
+  function toggleFlag(e){
+    const r = parseInt(this.dataset.r), c = parseInt(this.dataset.c);
+    const cell = grid[r][c];
+    if(cell.revealed) return;
+    cell.flagged = !cell.flagged;
+    if(cell.flagged) flagsLeft--; else flagsLeft++;
+    flagsLeftEl.textContent = flagsLeft;
+    updateCellElement(cell);
+  }
+
+  function revealCell(r,c){
+    if(gameOver) return;
+    const cell = grid[r][c];
+    if(cell.revealed || cell.flagged) return;
+
+    if(firstClick){
+      placeMinesAvoiding(r,c);
+      startTimer();
+      firstClick = false;
+    }
+
+    cell.revealed = true;
+    revealedCount++;
+    updateCellElement(cell);
+
+    if(cell.mine){
+      // lose
+      endGame(false, r, c);
+      return;
+    }
+
+    if(cell.count === 0){
+      // flood fill
+      floodFill(r,c);
+    }
+
+    checkWin();
+  }
+
+  function floodFill(sr,sc){
+    const stack = [[sr,sc]];
+    const seen = new Set();
+    while(stack.length){
+      const [r,c] = stack.pop();
+      for(let dr=-1; dr<=1; dr++){
+        for(let dc=-1; dc<=1; dc++){
+          const rr=r+dr, cc=c+dc;
+          if(rr<0||rr>=rows||cc<0||cc>=cols) continue;
+          const key = rr+','+cc;
+          if(seen.has(key)) continue;
+          const n = grid[rr][cc];
+          if(n.revealed || n.flagged) continue;
+          n.revealed = true;
+          revealedCount++;
+          updateCellElement(n);
+          seen.add(key);
+          if(n.count === 0 && !n.mine){
+            stack.push([rr,cc]);
+          }
+        }
+      }
+    }
+  }
+
+  function chord(r,c){
+    const cell = grid[r][c];
+    if(!cell.revealed || cell.count===0) return;
+    let flagged = 0;
+    const neighbors = [];
+    for(let dr=-1; dr<=1; dr++){
+      for(let dc=-1; dc<=1; dc++){
+        const rr=r+dr, cc=c+dc;
+        if(rr<0||rr>=rows||cc<0||cc>=cols) continue;
+        if(rr===r && cc===c) continue;
+        const n = grid[rr][cc];
+        neighbors.push([rr,cc,n]);
+        if(n.flagged) flagged++;
+      }
+    }
+    if(flagged === cell.count){
+      // reveal neighbors
+      for(const [rr,cc,n] of neighbors){
+        if(!n.revealed && !n.flagged){
+          revealCell(rr,cc);
+        }
+      }
+    }
+  }
+
+  function endGame(win, explodedR, explodedC){
+    gameOver = true;
+    stopTimer();
+    if(!win){
+      // reveal all mines
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const cell = grid[r][c];
+          if(cell.mine) { cell.revealed = true; updateCellElement(cell); }
+          // wrong flags
+          if(cell.flagged && !cell.mine){
+            cell.el.textContent = '✖';
+            cell.el.style.color = '#999';
+          }
+        }
+      }
+      gameStateEl.textContent = '失败 💥';
+    } else {
+      // reveal everything (optional)
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const cell = grid[r][c];
+          if(!cell.revealed){
+            cell.revealed = true; updateCellElement(cell);
+          }
+        }
+      }
+      gameStateEl.textContent = '胜利 🎉';
+    }
+  }
+
+  function checkWin(){
+    // win when all non-mine cells are revealed
+    if(revealedCount === totalCells - mines){
+      endGame(true);
+    }
+  }
+
+  function startTimer(){
+    if(timer) return;
+    seconds = 0;
+    timerEl.textContent = seconds;
+    timer = setInterval(()=>{ seconds++; timerEl.textContent = seconds; }, 1000);
+  }
+  function stopTimer(){ if(timer){ clearInterval(timer); timer=null; } }
+  function resetTimer(){ stopTimer(); seconds=0; timerEl.textContent = '0'; }
+
+  // initial
+  startNewGame();
+
+  // keyboard: N to new game, F to toggle flag on focused cell (not implemented focus), but keep simple
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='n' || e.key==='N') startNewGame();
+  });
+
+  // expose for debugging
+  window._minesweeper = { startNewGame };
+})();
+</script>
+</body>
+</html>
